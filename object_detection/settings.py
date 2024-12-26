@@ -119,7 +119,8 @@ USE_TZ = True
 
 STATIC_URL = "/static/"
 MEDIA_URL = "/media/"
-MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
+MEDIA_ROOT = os.path.join(BASE_DIR, 'media')  # Ensure BASE_DIR is correctly set
+
 
 import sys
 sys.path.append(os.path.join(BASE_DIR, 'yolov5'))

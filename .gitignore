@@ -1,0 +1,4 @@
+detection/__pycache__/*
+detection/migrations/*
+media/images/*
+runs/detect/*
