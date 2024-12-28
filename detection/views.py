@@ -1,58 +1,94 @@
 from django.shortcuts import render
 import torch
-from .forms import ImageUploadForm
-from .models import UploadImage
-import os
-from django.conf import settings
+from django import forms
+import base64
+import numpy as np
+from io import BytesIO
+from PIL import Image, ImageDraw
+from transformers import DetrImageProcessor, DetrForObjectDetection
 
 # Load YOLOv5 model
-model = torch.hub.load('ultralytics/yolov5', 'yolov5s', pretrained=True)
+yolo_model = torch.hub.load('ultralytics/yolov5', 'yolov5s', pretrained=True)
+
+# Load Hugging Face DETR model
+detr_processor = DetrImageProcessor.from_pretrained("facebook/detr-resnet-50")
+detr_model = DetrForObjectDetection.from_pretrained("facebook/detr-resnet-50")
+
+# Form for uploading an image
+class ImageUploadForm(forms.Form):
+    image = forms.ImageField()
 
 def upload_image(request):
     if request.method == 'POST':
         form = ImageUploadForm(request.POST, request.FILES)
         if form.is_valid():
-            # Save the uploaded image
-            uploaded_image = form.save()
-            image_path = uploaded_image.image.path  # Absolute path of the uploaded image
+            # Access the uploaded image
+            uploaded_image = request.FILES['image']
 
-            # Process the image and render the result immediately
-            return detect_objects(request, image_path, uploaded_image.image.url)
+            # Process the image with both models
+            return detect_objects_with_both_models(request, uploaded_image)
 
     else:
         form = ImageUploadForm()
     return render(request, 'detection/upload.html', {'form': form})
 
+def detect_objects_with_both_models(request, uploaded_image):
+    # Convert the uploaded image to a NumPy array and PIL Image
+    pil_image = Image.open(uploaded_image).convert("RGB")
+    np_image = np.array(pil_image)
 
-def detect_objects(request, image_path, uploaded_image_url):
     # Run YOLOv5 detection
-    results = model(image_path)
+    yolo_results = yolo_model(np_image)
+    yolo_results.render()
+    yolo_detection_data = yolo_results.pandas().xyxy[0]  # Get YOLO detection data as DataFrame
 
-    # Save results to the same directory as the uploaded image
-    output_dir = os.path.dirname(image_path)
-    results.save(save_dir=output_dir)
+    # Filter YOLO results by confidence threshold
+    yolo_confidence_threshold = 0.2
+    yolo_filtered_data = yolo_detection_data[yolo_detection_data['confidence'] >= yolo_confidence_threshold]
+    yolo_filtered_data = yolo_filtered_data.to_dict(orient="records")
 
-    # Locate the first processed file in the output directory
-    processed_files = [f for f in os.listdir(output_dir) if f.endswith(('.jpg', '.png')) and 'exp' not in f]
-    print(f"Processed files: {processed_files}")
+    # Convert YOLO rendered image to PIL format
+    yolo_rendered_image = Image.fromarray(yolo_results.ims[0])
 
-    if not processed_files:
-        raise FileNotFoundError("No processed files found.")
+    # Run Hugging Face DETR detection
+    detr_inputs = detr_processor(images=pil_image, return_tensors="pt")
+    detr_outputs = detr_model(**detr_inputs)
+    target_sizes = torch.tensor([pil_image.size[::-1]])  # Width, height
+    detr_results = detr_processor.post_process_object_detection(
+        detr_outputs, target_sizes=target_sizes, threshold=0.2
+    )[0]
 
-    processed_image = os.path.join(output_dir, processed_files[0])  # Get the first processed image
-    print(f"Processed image path: {processed_image}")
+    # Draw bounding boxes for DETR
+    detr_rendered_image = pil_image.copy()
+    draw = ImageDraw.Draw(detr_rendered_image)
+    detr_detection_data = []
+    for score, label, box in zip(detr_results["scores"], detr_results["labels"], detr_results["boxes"]):
+        x, y, x2, y2 = box.tolist()
+        draw.rectangle([x, y, x2, y2], outline="blue", width=4)
+        draw.text((x, y), f"{detr_model.config.id2label[label.item()]}: {score:.2f}", fill="blue")
+        detr_detection_data.append({
+            "name": detr_model.config.id2label[label.item()],
+            "confidence": f"{score:.2f}",
+            "box": [x, y, x2, y2],
+        })
 
-    # Generate URL for the processed image
-    processed_image_url = os.path.join(settings.MEDIA_URL, os.path.relpath(processed_image, settings.MEDIA_ROOT))
-    print(f"Processed image URL: {processed_image_url}")
+    # Encode images to Base64
+    uploaded_image_base64 = _encode_image_base64(pil_image)
+    yolo_image_base64 = _encode_image_base64(yolo_rendered_image)
+    detr_image_base64 = _encode_image_base64(detr_rendered_image)
 
-    # Get YOLOv5 detection data
-    detection_data = results.pandas().xyxy[0].to_dict(orient="records")
-    print(f"Detection data: {detection_data}")
-
-    # Render the result
+    # Render the results in HTML
     return render(request, 'detection/result.html', {
-        'uploaded_image_url': uploaded_image_url,
-        'processed_image_url': processed_image_url,
-        'detection_data': detection_data,
+        'uploaded_image_base64': uploaded_image_base64,
+        'yolo_image_base64': yolo_image_base64,
+        'detr_image_base64': detr_image_base64,
+        'yolo_detection_data': yolo_filtered_data,
+        'detr_detection_data': detr_detection_data,
     })
+
+def _encode_image_base64(image):
+    """Helper function to encode a PIL image to Base64."""
+    buffer = BytesIO()
+    image.save(buffer, format="JPEG")
+    buffer.seek(0)
+    return base64.b64encode(buffer.read()).decode('utf-8')

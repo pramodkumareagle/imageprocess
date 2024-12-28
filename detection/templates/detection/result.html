@@ -1,36 +1,105 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Detection Result</title>
+    <title>Detection Results</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+        .container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+            justify-content: space-around;
+        }
+        .image-section, .data-section {
+            flex: 1 1 calc(45%);
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+            padding: 15px;
+            border-radius: 10px;
+            background: #f9f9f9;
+        }
+        .image-section img {
+            max-width: 100%;
+            height: auto;
+            display: block;
+            margin: 0 auto;
+            border-radius: 10px;
+        }
+        h2 {
+            text-align: center;
+            margin-top: 0;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+            font-size: 16px;
+        }
+        table th, table td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: center;
+        }
+        table th {
+            background-color: #f2f2f2;
+        }
+    </style>
 </head>
 <body>
-    <h1>Detection Results</h1>
-    
-    <div style="display: flex; justify-content: space-around; align-items: center;">
-        <!-- Uploaded Image -->
-        <div>
-            <h2>Uploaded Image</h2>
-            <img src="{{ uploaded_image_url }}" alt="Uploaded Image" style="max-width: 300px; height: auto; border: 1px solid #ccc;">
-        </div>
+    <h1 style="text-align: center;">Detection Results</h1>
 
-        <!-- Processed Image -->
-        <div>
-            <h2>Processed Image</h2>
-            <img src="{{ processed_image_url }}" alt="Processed Image" style="max-width: 300px; height: auto; border: 1px solid #ccc;">
+    <!-- YOLOv5 Section -->
+    <div class="container">
+        <div class="image-section">
+            <h2>YOLOv5 Detection</h2>
+            <img src="data:image/jpeg;base64,{{ yolo_image_base64 }}" alt="YOLOv5 Detected Image">
+        </div>
+        <div class="data-section">
+            <h2>YOLOv5 Detection Data</h2>
+            <table>
+                <tr>
+                    <th>Label</th>
+                    <th>Confidence</th>
+                    <th>Bounding Box (Xmin, Ymin, Xmax, Ymax)</th>
+                </tr>
+                {% for item in yolo_detection_data %}
+                <tr>
+                    <td>{{ item.name }}</td>
+                    <td>{{ item.confidence }}</td>
+                    <td>{{ item.box }}</td>
+                </tr>
+                {% endfor %}
+            </table>
         </div>
     </div>
 
-    <h2>Detection Data</h2>
-    <ul>
-        {% for item in detection_data %}
-            <li>
-                Label: {{ item.name }} |
-                Confidence: {{ item.confidence|floatformat:2 }} |
-                Bounding Box: ({{ item.xmin }}, {{ item.ymin }}, {{ item.xmax }}, {{ item.ymax }})
-            </li>
-        {% endfor %}
-    </ul>
+    <!-- DETR Section -->
+    <div class="container">
+        <div class="image-section">
+            <h2>Hugging Face DETR Detection</h2>
+            <img src="data:image/jpeg;base64,{{ detr_image_base64 }}" alt="DETR Detected Image">
+        </div>
+        <div class="data-section">
+            <h2>Hugging Face DETR Detection Data</h2>
+            <table>
+                <tr>
+                    <th>Label</th>
+                    <th>Confidence</th>
+                    <th>Bounding Box (Xmin, Ymin, Xmax, Ymax)</th>
+                </tr>
+                {% for item in detr_detection_data %}
+                <tr>
+                    <td>{{ item.name }}</td>
+                    <td>{{ item.confidence }}</td>
+                    <td>{{ item.box }}</td>
+                </tr>
+                {% endfor %}
+            </table>
+        </div>
+    </div>
 </body>
 </html>
