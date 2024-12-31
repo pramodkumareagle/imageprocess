@@ -6,6 +6,9 @@ import numpy as np
 from io import BytesIO
 from PIL import Image, ImageDraw
 from transformers import DetrImageProcessor, DetrForObjectDetection
+from langchain.prompts import PromptTemplate
+from langchain.llms import OpenAI
+from langchain.chains import LLMChain
 
 # Load YOLOv5 model
 yolo_model = torch.hub.load('ultralytics/yolov5', 'yolov5s', pretrained=True)
@@ -13,6 +16,13 @@ yolo_model = torch.hub.load('ultralytics/yolov5', 'yolov5s', pretrained=True)
 # Load Hugging Face DETR model
 detr_processor = DetrImageProcessor.from_pretrained("facebook/detr-resnet-50")
 detr_model = DetrForObjectDetection.from_pretrained("facebook/detr-resnet-50")
+
+# LangChain setup
+llm = OpenAI(temperature=0)  # Replace with your OpenAI API key
+prompt = PromptTemplate(
+    input_variables=["detections"],
+    template="Analyze the following detections: {detections}"
+)
 
 # Form for uploading an image
 class ImageUploadForm(forms.Form):
@@ -22,35 +32,29 @@ def upload_image(request):
     if request.method == 'POST':
         form = ImageUploadForm(request.POST, request.FILES)
         if form.is_valid():
-            # Access the uploaded image
             uploaded_image = request.FILES['image']
-
-            # Process the image with both models
-            return detect_objects_with_both_models(request, uploaded_image)
-
+            action = request.POST.get('action')
+            if action == 'upload':
+                return detect_objects_with_both_models(request, uploaded_image)
+            elif action == 'langchain':
+                return detect_with_langchain(request, uploaded_image)
     else:
         form = ImageUploadForm()
     return render(request, 'detection/upload.html', {'form': form})
 
 def detect_objects_with_both_models(request, uploaded_image):
-    # Convert the uploaded image to a NumPy array and PIL Image
     pil_image = Image.open(uploaded_image).convert("RGB")
     np_image = np.array(pil_image)
 
-    # Run YOLOv5 detection
+    # YOLOv5 detection
     yolo_results = yolo_model(np_image)
     yolo_results.render()
-    yolo_detection_data = yolo_results.pandas().xyxy[0]  # Get YOLO detection data as DataFrame
-
-    # Filter YOLO results by confidence threshold
-    yolo_confidence_threshold = 0.2
-    yolo_filtered_data = yolo_detection_data[yolo_detection_data['confidence'] >= yolo_confidence_threshold]
-    yolo_filtered_data = yolo_filtered_data.to_dict(orient="records")
+    yolo_detection_data = yolo_results.pandas().xyxy[0].to_dict(orient="records")
 
     # Convert YOLO rendered image to PIL format
     yolo_rendered_image = Image.fromarray(yolo_results.ims[0])
 
-    # Run Hugging Face DETR detection
+    # DETR detection
     detr_inputs = detr_processor(images=pil_image, return_tensors="pt")
     detr_outputs = detr_model(**detr_inputs)
     target_sizes = torch.tensor([pil_image.size[::-1]])  # Width, height
@@ -58,10 +62,9 @@ def detect_objects_with_both_models(request, uploaded_image):
         detr_outputs, target_sizes=target_sizes, threshold=0.2
     )[0]
 
-    # Draw bounding boxes for DETR
+    detr_detection_data = []
     detr_rendered_image = pil_image.copy()
     draw = ImageDraw.Draw(detr_rendered_image)
-    detr_detection_data = []
     for score, label, box in zip(detr_results["scores"], detr_results["labels"], detr_results["boxes"]):
         x, y, x2, y2 = box.tolist()
         draw.rectangle([x, y, x2, y2], outline="blue", width=4)
@@ -72,22 +75,63 @@ def detect_objects_with_both_models(request, uploaded_image):
             "box": [x, y, x2, y2],
         })
 
-    # Encode images to Base64
     uploaded_image_base64 = _encode_image_base64(pil_image)
     yolo_image_base64 = _encode_image_base64(yolo_rendered_image)
     detr_image_base64 = _encode_image_base64(detr_rendered_image)
 
-    # Render the results in HTML
     return render(request, 'detection/result.html', {
         'uploaded_image_base64': uploaded_image_base64,
         'yolo_image_base64': yolo_image_base64,
         'detr_image_base64': detr_image_base64,
-        'yolo_detection_data': yolo_filtered_data,
+        'yolo_detection_data': yolo_detection_data,
         'detr_detection_data': detr_detection_data,
     })
 
+def detect_with_langchain(request, uploaded_image):
+    pil_image = Image.open(uploaded_image).convert("RGB")
+    np_image = np.array(pil_image)
+
+    # YOLOv5 detection
+    yolo_results = yolo_model(np_image)
+    yolo_detection_data = yolo_results.pandas().xyxy[0].to_dict(orient="records")
+
+    # DETR detection
+    detr_inputs = detr_processor(images=pil_image, return_tensors="pt")
+    detr_outputs = detr_model(**detr_inputs)
+    target_sizes = torch.tensor([pil_image.size[::-1]])
+    detr_results = detr_processor.post_process_object_detection(
+        detr_outputs, target_sizes=target_sizes, threshold=0.2
+    )[0]
+
+    detr_detection_data = [
+        {
+            "name": detr_model.config.id2label[label.item()],
+            "confidence": f"{score:.2f}",
+            "box": [round(box[0].item(), 2), round(box[1].item(), 2), round(box[2].item(), 2), round(box[3].item(), 2)],
+        }
+        for score, label, box in zip(detr_results["scores"], detr_results["labels"], detr_results["boxes"])
+    ]
+
+    # Combine YOLO and DETR summaries
+    combined_summary = f"YOLO detected: {', '.join([d['name'] for d in yolo_detection_data])}. DETR detected: {', '.join([d['name'] for d in detr_detection_data])}."
+    chain = LLMChain(llm=llm, prompt=prompt)
+    langchain_analysis = chain.run({"detections": combined_summary})
+
+    # Preprocess the analysis into a list
+    analysis_list = langchain_analysis.split(". ")
+
+    # Encode the annotated image
+    annotated_image_base64 = _encode_image_base64(pil_image)
+
+    return render(request, 'detection/langchain_analysis.html', {
+        'annotated_image_base64': annotated_image_base64,
+        'analysis_list': analysis_list,
+        'yolo_detection_data': yolo_detection_data,
+        'detr_detection_data': detr_detection_data,
+    })
+
+
 def _encode_image_base64(image):
-    """Helper function to encode a PIL image to Base64."""
     buffer = BytesIO()
     image.save(buffer, format="JPEG")
     buffer.seek(0)
