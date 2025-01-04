@@ -13,6 +13,7 @@ dataclasses-json==0.6.7
 distro==1.9.0
 Django==5.1.4
 django-requests==0.0.2
+Faker==33.1.0
 filelock==3.16.1
 fonttools==4.55.3
 frozenlist==1.5.0
@@ -43,7 +44,7 @@ multidict==6.1.0
 mypy-extensions==1.0.0
 networkx==3.4.2
 numpy==1.26.4
-openai==1.58.1
+openai==0.28.0
 opencv-python==4.10.0.84
 orjson==3.10.13
 packaging==24.2
