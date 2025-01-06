@@ -3,134 +3,129 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Chatbot</title>
+    <title>Upload and Chat</title>
     <style>
         body {
             font-family: Arial, sans-serif;
             background-color: #f4f4f9;
-            margin: 0;
-            padding: 0;
             display: flex;
-            justify-content: center;
+            flex-direction: column;
             align-items: center;
-            height: 100vh;
-        }
-
-        .container {
-            background: #fff;
             padding: 20px;
+        }
+        .container {
+            margin-top: 20px;
+            padding: 20px;
+            background: white;
             border-radius: 8px;
             box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
-            width: 400px;
-            text-align: center;
+            width: 50%;
         }
-
-        h2 {
-            margin-bottom: 20px;
-            color: #4CAF50;
-        }
-
         .chat-log {
             height: 300px;
             overflow-y: auto;
             border: 1px solid #ddd;
             padding: 10px;
-            margin-bottom: 10px;
+            margin-top: 20px;
         }
-
-        .message {
-            margin-bottom: 10px;
-        }
-
-        .user {
-            font-weight: bold;
-            color: #333;
-        }
-
-        .bot {
-            font-style: italic;
-            color: #555;
-        }
-
         .chat-input {
             display: flex;
             gap: 10px;
+            margin-top: 10px;
         }
-
         .chat-input input {
             flex: 1;
             padding: 10px;
             border: 1px solid #ddd;
             border-radius: 4px;
         }
-
         .chat-input button {
-            padding: 10px 15px;
+            padding: 10px;
             background: #4CAF50;
             color: white;
             border: none;
             border-radius: 4px;
             cursor: pointer;
         }
-
-        .chat-input button:hover {
-            background: #45a049;
-        }
     </style>
 </head>
 <body>
     <div class="container">
-        <h2>Chatbot</h2>
+        <h2>Upload Image for Analysis</h2>
+        <form id="image-upload-form" method="POST" enctype="multipart/form-data">
+            {% csrf_token %}
+            <input type="file" name="image" id="image" required>
+            <button type="submit">Upload</button>
+        </form>
+
+        <h2>Ask Questions About the Image</h2>
         <div class="chat-log" id="chat-log">
-            <div class="message bot">Hello! How can I help you today?</div>
+            <div class="message bot">Upload an image to get started!</div>
         </div>
         <div class="chat-input">
-            <input type="text" id="user-message" placeholder="Type your message...">
+            <input type="text" id="user-message" placeholder="Ask about the uploaded image...">
             <button onclick="sendMessage()">Send</button>
         </div>
-        <input type="hidden" id="csrf_token" value="{{ csrf_token }}">
     </div>
 
     <script>
         const chatLog = document.getElementById('chat-log');
 
-        function appendMessage(message, sender) {
-            const messageDiv = document.createElement('div');
-            messageDiv.classList.add('message', sender);
-            messageDiv.innerText = message;
-            chatLog.appendChild(messageDiv);
-            chatLog.scrollTop = chatLog.scrollHeight; // Auto-scroll to the bottom
-        }
+        document.getElementById('image-upload-form').onsubmit = function(event) {
+            event.preventDefault();
+            const formData = new FormData(this);
+            fetch('/chatbot/', {
+                method: 'POST',
+                body: formData,
+            })
+            .then(response => response.json())
+            .then(data => {
+                const botMessageElement = document.createElement('div');
+                botMessageElement.classList.add('message', 'bot');
+                botMessageElement.textContent = data.message || 'Image uploaded successfully!';
+                chatLog.appendChild(botMessageElement);
+            })
+            .catch(error => {
+                console.error('Error:', error);
+            });
+        };
 
         function sendMessage() {
             const userMessage = document.getElementById('user-message').value.trim();
             if (!userMessage) return;
 
-            // Append user's message to the chat log
-            appendMessage(userMessage, 'user');
-            document.getElementById('user-message').value = ''; // Clear input field
+            // Append user message to chat log
+            const userMessageElement = document.createElement('div');
+            userMessageElement.classList.add('message', 'user');
+            userMessageElement.textContent = userMessage;
+            chatLog.appendChild(userMessageElement);
 
             // Send message to backend
-            fetch('', {
+            fetch('/chatbot/', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/x-www-form-urlencoded',
-                    'X-CSRFToken': document.getElementById('csrf_token').value
+                    'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value,
                 },
-                body: `user_message=${encodeURIComponent(userMessage)}`
+                body: `user_message=${encodeURIComponent(userMessage)}`,
             })
             .then(response => response.json())
             .then(data => {
-                if (data.response) {
-                    appendMessage(data.response, 'bot');
-                } else if (data.error) {
-                    appendMessage('Error: ' + data.error, 'bot');
-                }
+                const botMessageElement = document.createElement('div');
+                botMessageElement.classList.add('message', 'bot');
+                botMessageElement.textContent = data.response || 'No response received.';
+                chatLog.appendChild(botMessageElement);
             })
             .catch(error => {
                 console.error('Error:', error);
-                appendMessage('Oops! Something went wrong. Please try again later.', 'bot');
+                const errorMessageElement = document.createElement('div');
+                errorMessageElement.classList.add('message', 'bot');
+                errorMessageElement.textContent = 'An error occurred. Please try again.';
+                chatLog.appendChild(errorMessageElement);
             });
+
+            // Clear input field
+            document.getElementById('user-message').value = '';
         }
     </script>
 </body>

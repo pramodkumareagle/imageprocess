@@ -168,30 +168,61 @@ def detect_with_langchain(request, uploaded_image):
         'detr_detection_data': detr_detection_data,
     })
 
+temp_data = {
+    'image': None,
+    'detections': None,
+}
 
 def handle_chatbot(request):
     if request.method == 'POST':
+        # Handle image upload
+        if 'image' in request.FILES:
+            uploaded_image = request.FILES['image']
+            pil_image = Image.open(uploaded_image).convert("RGB")
+
+            detections = detect_objects(pil_image)
+
+            # Store the image and detections in memory
+            temp_data['image'] = pil_image
+            temp_data['detections'] = detections
+
+            return JsonResponse({'message': 'image uploaded successfully', 'detections': detections})
+        
+        # Handle user message
         user_message = request.POST.get('user_message', '').strip()
         if user_message:
+            if not temp_data['detections']:
+                return JsonResponse({'message': 'Please upload an image first.'})
+            
+            # Add detections to the message
+            detections_summery  = ', '.join(temp_data['detections'])
+            user_message += f" the image contains {detections_summery}"
+
             try:
                 response = openai.ChatCompletion.create(
-                    model="gpt-3.5-turbo",  
-                    messages=[
-                        {"role": "system", "content": "You are a helpful AI assistant."},
-                        {"role": "user", "content": user_message}
+                    model = "gpt-3.5-turbo",
+                    messages = [
+                        {"role": "system", "content": "You are a helpful assistant."},
+                        {"role": "user","content": user_message}
                     ]
                 )
-                chatbot_response = response['choices'][0]['message']['content']
-                return JsonResponse({"response": chatbot_response})
+                chatbot_response = response.choices[0]['message']['content']
+                return JsonResponse({'message': chatbot_response})
             except Exception as e:
-                return JsonResponse({"error": f"An error occurred: {str(e)}"}, status=500)
-        else:
-            return JsonResponse({"error": "No user message provided"}, status=400)
-    
+                return JsonResponse({'message': str(e)})
+            
     return render(request, 'detection/chatbot.html')
+    
+def detect_objects(image):
+    results = yolo_model(image)
+    detections = [item['name'] for item in results.pandas().xyxy[0].to_dict(orient="records")]
+    return detections
+   
+
 
 def _encode_image_base64(image):
     buffer = BytesIO()
     image.save(buffer, format="JPEG")
     buffer.seek(0)
     return base64.b64encode(buffer.read()).decode('utf-8')
+
