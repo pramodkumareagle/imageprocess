@@ -28,6 +28,17 @@
             padding: 10px;
             margin-top: 20px;
         }
+        .message {
+            margin-bottom: 10px;
+        }
+        .message.user {
+            text-align: right;
+            color: #2c3e50;
+        }
+        .message.bot {
+            text-align: left;
+            color: #16a085;
+        }
         .chat-input {
             display: flex;
             gap: 10px;
@@ -46,6 +57,9 @@
             border: none;
             border-radius: 4px;
             cursor: pointer;
+        }
+        .chat-input button:hover {
+            background: #45a049;
         }
     </style>
 </head>
@@ -71,9 +85,11 @@
     <script>
         const chatLog = document.getElementById('chat-log');
 
+        // Handle image upload
         document.getElementById('image-upload-form').onsubmit = function(event) {
             event.preventDefault();
             const formData = new FormData(this);
+
             fetch('/chatbot/', {
                 method: 'POST',
                 body: formData,
@@ -84,23 +100,38 @@
                 botMessageElement.classList.add('message', 'bot');
                 botMessageElement.textContent = data.message || 'Image uploaded successfully!';
                 chatLog.appendChild(botMessageElement);
+
+                // Display grouped detections
+                if (data.detections) {
+                    const detectionsList = Object.entries(data.detections)
+                        .map(([object, count]) => `${count} ${object}${count > 1 ? 's' : ''}`)
+                        .join(', ');
+
+                    const detectionsMessageElement = document.createElement('div');
+                    detectionsMessageElement.classList.add('message', 'bot');
+                    detectionsMessageElement.textContent = `Detected objects: ${detectionsList}`;
+                    chatLog.appendChild(detectionsMessageElement);
+                }
+
+                // Auto-scroll to bottom
+                chatLog.scrollTop = chatLog.scrollHeight;
             })
             .catch(error => {
                 console.error('Error:', error);
             });
         };
 
+        // Handle chat messages
         function sendMessage() {
             const userMessage = document.getElementById('user-message').value.trim();
             if (!userMessage) return;
 
-            // Append user message to chat log
+            // Append user's message to chat log
             const userMessageElement = document.createElement('div');
             userMessageElement.classList.add('message', 'user');
             userMessageElement.textContent = userMessage;
             chatLog.appendChild(userMessageElement);
 
-            // Send message to backend
             fetch('/chatbot/', {
                 method: 'POST',
                 headers: {
@@ -113,8 +144,11 @@
             .then(data => {
                 const botMessageElement = document.createElement('div');
                 botMessageElement.classList.add('message', 'bot');
-                botMessageElement.textContent = data.response || 'No response received.';
+                botMessageElement.textContent = data.message || 'No response received.';
                 chatLog.appendChild(botMessageElement);
+
+                // Auto-scroll to bottom
+                chatLog.scrollTop = chatLog.scrollHeight;
             })
             .catch(error => {
                 console.error('Error:', error);
@@ -124,7 +158,7 @@
                 chatLog.appendChild(errorMessageElement);
             });
 
-            // Clear input field
+            // Clear the input field
             document.getElementById('user-message').value = '';
         }
     </script>

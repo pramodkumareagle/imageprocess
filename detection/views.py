@@ -12,6 +12,7 @@ from langchain.chains import LLMChain
 import openai
 from django.http import JsonResponse
 import os
+from collections import Counter
 
 
 openai.api_key = os.getenv('OPENAI_API_KEY')
@@ -168,6 +169,7 @@ def detect_with_langchain(request, uploaded_image):
         'detr_detection_data': detr_detection_data,
     })
 
+
 temp_data = {
     'image': None,
     'detections': None,
@@ -186,7 +188,7 @@ def handle_chatbot(request):
             temp_data['image'] = pil_image
             temp_data['detections'] = detections
 
-            return JsonResponse({'message': 'image uploaded successfully', 'detections': detections})
+            return JsonResponse({'message': 'Image uploaded successfully!', 'detections': detections})
         
         # Handle user message
         user_message = request.POST.get('user_message', '').strip()
@@ -195,30 +197,103 @@ def handle_chatbot(request):
                 return JsonResponse({'message': 'Please upload an image first.'})
             
             # Add detections to the message
-            detections_summery  = ', '.join(temp_data['detections'])
-            user_message += f" the image contains {detections_summery}"
+            detections_summary = ', '.join([f"{count} {obj}(s)" for obj, count in temp_data['detections'].items()])
+            user_message += f" The image contains: {detections_summary}."
 
             try:
                 response = openai.ChatCompletion.create(
-                    model = "gpt-3.5-turbo",
-                    messages = [
-                        {"role": "system", "content": "You are a helpful assistant."},
-                        {"role": "user","content": user_message}
+                    model="gpt-3.5-turbo",
+                    messages=[
+                        {"role": "system", "content": "You are a helpful assistant analyzing image detections."},
+                        {"role": "user", "content": user_message}
                     ]
                 )
-                chatbot_response = response.choices[0]['message']['content']
+                chatbot_response = response['choices'][0]['message']['content']
                 return JsonResponse({'message': chatbot_response})
             except Exception as e:
                 return JsonResponse({'message': str(e)})
-            
-    return render(request, 'detection/chatbot.html')
     
+    return render(request, 'detection/chatbot.html')
+
 def detect_objects(image):
     results = yolo_model(image)
     detections = [item['name'] for item in results.pandas().xyxy[0].to_dict(orient="records")]
-    return detections
-   
+    # Group detections by object type and count them
+    detection_counts = dict(Counter(detections))
+    return detection_counts
 
+from django.core.files.storage import FileSystemStorage
+import cv2
+
+def handle_video_upload(request):
+    if request.method == 'POST' and 'video' in request.FILES:
+        video_file = request.FILES['video']
+        fs = FileSystemStorage()
+        video_path = fs.save(video_file.name, video_file)
+        video_full_path = fs.path(video_path)
+
+        # Process the video and save the output
+        output_video_path, detections_summary = process_video(video_full_path)
+
+        return JsonResponse({
+            'message': 'Video processed successfully!',
+            'detections': detections_summary,
+            'processed_video_url': fs.url(output_video_path),
+        })
+
+    return render(request, 'detection/video_upload.html')
+
+def process_video(video_path):
+    cap = cv2.VideoCapture(video_path)
+    frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    fps = int(cap.get(cv2.CAP_PROP_FPS))
+
+    # save the processed video
+    output_path = video_path.replace('.mp4', '_processed.mp4')
+    out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (frame_width, frame_height))
+
+    all_detections = []
+
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        # convert the frame to PIL format to detect
+        pil_frame = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+        # Run object detection on the frame
+        detections = detect_objects_videos(pil_frame)
+        all_detections.extend([d['name'] for d in detections])
+        # Annotate the frame
+        annotated_frame = annotate_frame(frame, detections)
+        # write the annotated frame to the output video
+        out.write(annotated_frame)
+
+    cap.release()
+    out.release()
+
+    detections_summary = dict(Counter(all_detections))
+    return output_path, detections_summary
+
+
+def detect_objects_videos(frame):
+    results = yolo_model(frame)
+    # detecting the labels
+    detections = results.pandas().xyxy[0].to_dict(orient="records")
+    return detections
+
+
+def annotate_frame(frame, detections):
+    for detection in detections:
+        xmin, ymin, xmax, ymax = int(detection['xmin']), int(detection['ymin']), int(detection['xmax']), int(detection['ymax'])
+        name = detection['name']
+        # Draw bounding box and label
+        cv2.rectangle(frame, (xmin, ymin), (xmax, ymax), (0, 255, 0), 2)
+        # add label
+        cv2.putText(frame, name, (xmin, ymin - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+    
+    return frame
 
 def _encode_image_base64(image):
     buffer = BytesIO()
